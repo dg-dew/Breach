@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    @apply bg-bg-base text-cream antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg-base font-sans text-cream;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    @apply bg-amber/25 text-cream;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a1510;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e4a35;
+    border-radius: 6px;
+    border: 2px solid #0a1510;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #275d40;
+  }
+
+  /* Visible focus states for accessibility */
+  :focus-visible {
+    outline: 2px solid rgba(230, 184, 92, 0.7);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* Panel surface with subtle border */
+  .panel {
+    @apply relative rounded-sm border border-white/5 bg-surface/80 backdrop-blur-sm;
+  }
+
+  /* Small label with tracking */
+  .label {
+    @apply font-mono text-[10px] uppercase tracking-[0.25em] text-muted;
+  }
+
+  /* Screen-hack-style corners on panels */
+  .corners {
+    @apply relative;
+  }
+  .corners::before,
+  .corners::after {
+    content: '';
+    @apply pointer-events-none absolute h-2 w-2 border-amber/40;
+  }
+  .corners::before {
+    @apply left-0 top-0 border-l border-t;
+  }
+  .corners::after {
+    @apply bottom-0 right-0 border-b border-r;
+  }
+
+  .text-shadow-amber {
+    text-shadow: 0 0 18px rgba(230, 184, 92, 0.35);
+  }
+}
+
+/* Subtle film grain overlay */
+.grain::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain-shift 0.9s steps(4) infinite;
+}
+
+@keyframes grain-shift {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-2%, 3%); }
+  50% { transform: translate(3%, -2%); }
+  75% { transform: translate(-3%, -3%); }
+  100% { transform: translate(2%, 2%); }
+}
+
+/* Data flow along edges */
+.edge-flow {
+  stroke-dasharray: 6 10;
+  animation: edge-flow 1.4s linear infinite;
+}
+@keyframes edge-flow {
+  to { stroke-dashoffset: -16; }
+}
+
+.edge-flow-slow {
+  stroke-dasharray: 4 8;
+  animation: edge-flow 3.2s linear infinite;
+  animation-play-state: paused;
+}
+
+/* Scanline / CRT atmosphere */
+.crt-lines::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  pointer-events: none;
+  opacity: 0.04;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.6) 3px,
+    transparent 4px
+  );
+}
+
+/* Thin vertical grid used behind hero / dashboard */
+.grid-lines {
+  background-image:
+    linear-gradient(rgba(230, 184, 92, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(230, 184, 92, 0.03) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* Reduced motion: disable grain + scanline animation */
+@media (prefers-reduced-motion: reduce) {
+  .grain::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
