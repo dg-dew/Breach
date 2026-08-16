@@ -1,19 +1,16 @@
 import { lazy, Suspense } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { MotionConfig } from 'framer-motion'
-import { AppShell } from '@/components/layout/AppShell'
 import { PageLoader } from '@/components/ui/PageLoader'
 import { useSettingsStore } from '@/store/settingsStore'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 
-const LandingPage = lazy(() => import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })))
-const SafehousePage = lazy(() => import('@/pages/SafehousePage').then((m) => ({ default: m.SafehousePage })))
-const ContractsPage = lazy(() => import('@/pages/ContractsPage').then((m) => ({ default: m.ContractsPage })))
-const MissionPage = lazy(() => import('@/pages/MissionPage').then((m) => ({ default: m.MissionPage })))
-const NetworkPage = lazy(() => import('@/pages/NetworkPage').then((m) => ({ default: m.NetworkPage })))
-const OperatorPage = lazy(() => import('@/pages/OperatorPage').then((m) => ({ default: m.OperatorPage })))
-const ArchivePage = lazy(() => import('@/pages/ArchivePage').then((m) => ({ default: m.ArchivePage })))
-const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const OperatorEntryPage = lazy(() => import('@/pages/OperatorEntryPage').then((m) => ({ default: m.OperatorEntryPage })))
+const BriefingPage = lazy(() => import('@/pages/BriefingPage').then((m) => ({ default: m.BriefingPage })))
+const IntroPage = lazy(() => import('@/pages/IntroPage').then((m) => ({ default: m.IntroPage })))
+const HeistPage = lazy(() => import('@/pages/HeistPage').then((m) => ({ default: m.HeistPage })))
+const ResultsPage = lazy(() => import('@/pages/ResultsPage').then((m) => ({ default: m.ResultsPage })))
+const AnalysisPage = lazy(() => import('@/pages/AnalysisPage').then((m) => ({ default: m.AnalysisPage })))
 
 export default function App() {
   const osReduced = usePrefersReducedMotion()
@@ -24,17 +21,13 @@ export default function App() {
     <MotionConfig reducedMotion={reduce ? 'always' : 'never'}>
       <HashRouter>
         <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Suspense fallback={<PageLoader />}><LandingPage /></Suspense>} />
-            <Route path="/safehouse" element={<Suspense fallback={<PageLoader />}><SafehousePage /></Suspense>} />
-            <Route path="/contracts" element={<Suspense fallback={<PageLoader />}><ContractsPage /></Suspense>} />
-            <Route path="/mission/:missionId" element={<Suspense fallback={<PageLoader />}><MissionPage /></Suspense>} />
-            <Route path="/network" element={<Suspense fallback={<PageLoader />}><NetworkPage /></Suspense>} />
-            <Route path="/operator" element={<Suspense fallback={<PageLoader />}><OperatorPage /></Suspense>} />
-            <Route path="/archive" element={<Suspense fallback={<PageLoader />}><ArchivePage /></Suspense>} />
-            <Route path="/settings" element={<Suspense fallback={<PageLoader />}><SettingsPage /></Suspense>} />
-            <Route path="*" element={<Suspense fallback={<PageLoader />}><LandingPage /></Suspense>} />
-          </Route>
+          <Route path="/" element={<Suspense fallback={<PageLoader />}><OperatorEntryPage /></Suspense>} />
+          <Route path="/intro" element={<Suspense fallback={<PageLoader />}><IntroPage /></Suspense>} />
+          <Route path="/briefing" element={<Suspense fallback={<PageLoader />}><BriefingPage /></Suspense>} />
+          <Route path="/heist" element={<Suspense fallback={<PageLoader />}><HeistPage /></Suspense>} />
+          <Route path="/results" element={<Suspense fallback={<PageLoader />}><ResultsPage /></Suspense>} />
+          <Route path="/analysis" element={<Suspense fallback={<PageLoader />}><AnalysisPage /></Suspense>} />
+          <Route path="*" element={<Suspense fallback={<PageLoader />}><OperatorEntryPage /></Suspense>} />
         </Routes>
       </HashRouter>
     </MotionConfig>
