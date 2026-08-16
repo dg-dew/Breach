@@ -16,13 +16,18 @@ import {
   FACILITY_ROUTES,
   MST_EDGES,
   MST_NODES,
+  PATHFINDING_EDGES,
+  PATHFINDING_NODES,
+  PATHFINDING_START,
+  PATHFINDING_TARGET,
   SERVER_ID,
   asset,
   locationName,
   mstEdge,
+  pathfindingEdgeBetween,
   routeBetweenFacility,
 } from './world'
-import { facilityGraph, knapsack } from './solve'
+import { facilityGraph, knapsack, pathfindingGraph } from './solve'
 import type { HeistSnapshot } from './types'
 
 export interface AnalysisNode {
@@ -65,6 +70,29 @@ export interface HeistAnalysis {
   routes: AnalysisRoute[]
   playerPath: string[]
   optimalRoute: string[]
+  /** Phase 3 weighted-graph analysis. */
+  pfNodes: Array<{ id: string; name: string; x: number; y: number }>
+  pfEdges: Array<{
+    id: string
+    from: string
+    to: string
+    cost: number
+    timeSec: number
+    exposure: number
+    playerUsed: boolean
+    optimal: boolean
+  }>
+  pfPlayerPath: string[]
+  pfOptimalPath: string[]
+  pfPlayerCost: number
+  pfOptimalCost: number
+  pfEfficiency: number
+  pfExposureGained: number
+  pfDistanceTable: Array<{ nodeId: string; distance: number }>
+  pfPqNodesProcessed: number
+  pfPqRelaxations: number
+  pfPqOps: number
+  pfDecisionPoint: DecisionPoint | null
   mstOptimalEdges: string[]
   mstPlayerEdges: string[]
   mstPlayerCost: number
@@ -107,13 +135,9 @@ export function buildAnalysis(snap: HeistSnapshot): HeistAnalysis {
     return { id: l.id, name: l.name, kind: l.kind, x, y }
   })
 
-  // Pathfinding optimal from SERVER to ARCHIVE (phase 3) then ARCHIVE to EXIT (phase 6)
-  const pathfindingOptimal = runAlgorithm(
-    'DIJKSTRA',
-    facilityGraph('pathfinding'),
-    SERVER_ID,
-    ARCHIVE_ID,
-  ).path
+  // Pathfinding optimal from SERVER to ARCHIVE on the dedicated weighted graph (phase 3)
+  const pathfindingRun = runAlgorithm('DIJKSTRA', pathfindingGraph(), PATHFINDING_START, PATHFINDING_TARGET)
+  const pathfindingOptimal = pathfindingRun.path
   const extractionOptimal = runAlgorithm(
     'DIJKSTRA',
     facilityGraph('extraction'),
@@ -124,6 +148,32 @@ export function buildAnalysis(snap: HeistSnapshot): HeistAnalysis {
 
   const playerPath = snap.playerPath
   const playerEdges = new Set(snap.playerEdges)
+
+  // --- Phase 3 weighted graph analysis ---
+  const pfPlayerPath = snap.performance.pathfinding.playerPath?.length
+    ? snap.performance.pathfinding.playerPath
+    : [SERVER_ID, ARCHIVE_ID]
+  const pfPlayerCost = snap.performance.pathfinding.playerCost ?? 0
+  const pfOptimalCost = pathfindingRun.pathCost
+  const pfEdges = PATHFINDING_EDGES.map((e) => {
+    const inPath = (path: string[]) =>
+      path.some((_, i) => i < path.length - 1 && ((path[i] === e.from && path[i + 1] === e.to) || (path[i] === e.to && path[i + 1] === e.from)))
+    return {
+      id: e.id,
+      from: e.from,
+      to: e.to,
+      cost: e.cost,
+      timeSec: e.timeSec,
+      exposure: e.exposure,
+      playerUsed: inPath(pfPlayerPath),
+      optimal: inPath(pathfindingOptimal),
+    }
+  })
+  const pfDistanceTable = PATHFINDING_NODES.map((n) => ({
+    nodeId: n.id,
+    distance: pathfindingRun.distanceMap?.[n.id] ?? Infinity,
+  }))
+  const pfDecisionPoint = computePathfindingDecisionPoint(pfPlayerPath, pathfindingOptimal)
 
   // MST
   const mstRun = runAlgorithm(
@@ -192,6 +242,19 @@ export function buildAnalysis(snap: HeistSnapshot): HeistAnalysis {
     routes,
     playerPath,
     optimalRoute,
+    pfNodes: PATHFINDING_NODES.map((n) => ({ id: n.id, name: n.name, x: n.x, y: n.y })),
+    pfEdges,
+    pfPlayerPath,
+    pfOptimalPath: pathfindingOptimal,
+    pfPlayerCost,
+    pfOptimalCost,
+    pfEfficiency: pfOptimalCost > 0 ? Math.round((pfOptimalCost / Math.max(1, pfPlayerCost)) * 100) : 100,
+    pfExposureGained: snap.performance.pathfinding.exposureGained ?? 0,
+    pfDistanceTable,
+    pfPqNodesProcessed: pathfindingRun.totalVisits,
+    pfPqRelaxations: pathfindingRun.steps.filter((s) => s.type === 'relax').length,
+    pfPqOps: pathfindingRun.steps.filter((s) => s.type === 'enqueue' || s.type === 'dequeue' || s.type === 'update').length,
+    pfDecisionPoint,
     mstOptimalEdges,
     mstPlayerEdges,
     mstPlayerCost,
@@ -271,6 +334,43 @@ export function computeDecisionPoints(
     if (points.length >= 6) break
   }
   return points
+}
+
+/**
+ * The first moment the player left the Dijkstra-optimal path on the Phase 3
+ * graph, described with the real edge numbers. Returns null if never diverged.
+ */
+export function computePathfindingDecisionPoint(
+  playerPath: string[],
+  optimalPath: string[],
+): DecisionPoint | null {
+  if (playerPath.length < 2 || optimalPath.length < 2) return null
+  const oStart = playerPath.indexOf(optimalPath[0])
+  if (oStart === -1) return null
+  const leg = playerPath.slice(oStart)
+
+  for (let i = 0; i < Math.min(leg.length - 1, optimalPath.length - 1); i++) {
+    const from = leg[i]
+    const next = leg[i + 1]
+    if (next === optimalPath[i + 1]) continue
+    const playerR = pathfindingEdgeBetween(from, next)
+    const optR = pathfindingEdgeBetween(from, optimalPath[i + 1])
+    if (playerR && optR) {
+      return {
+        nodeId: from,
+        playerRoute: playerR.id,
+        optimalRoute: optR.id,
+        playerCost: playerR.cost,
+        optimalCost: optR.cost,
+        playerTime: playerR.timeSec,
+        optimalTime: optR.timeSec,
+        playerExposure: playerR.exposure,
+        optimalExposure: optR.exposure,
+      }
+    }
+    return null
+  }
+  return null
 }
 
 export function locationLabel(id: string): string {

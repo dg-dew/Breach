@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { Graph } from '@/data-structures/Graph'
-import { FACILITY_ROUTES, PHASE_INDEX } from './world'
+import { FACILITY_ROUTES, PATHFINDING_EDGES, PHASE_INDEX } from './world'
 import type { Asset, HeistPhase } from './types'
 
 /** Is this facility route open during the given phase? */
@@ -31,6 +31,27 @@ export function facilityGraph(phase: HeistPhase): Graph {
     risk: r.risk,
   }))
   return new Graph({ nodes: nodes.map((id) => ({ id, label: id, type: 'router' as const, securityLevel: 0, position: { x: 0, y: 0 } })), edges })
+}
+
+/**
+ * The dedicated Phase 3 weighted graph used by Dijkstra.
+ * Primary weight is the pathfinding edge cost.
+ */
+export function pathfindingGraph(): Graph {
+  return new Graph({
+    nodes: PATHFINDING_EDGES.reduce<string[]>((acc, e) => {
+      if (!acc.includes(e.from)) acc.push(e.from)
+      if (!acc.includes(e.to)) acc.push(e.to)
+      return acc
+    }, []).map((id) => ({ id, label: id, type: 'router' as const, securityLevel: 0, position: { x: 0, y: 0 } })),
+    edges: PATHFINDING_EDGES.map((e) => ({
+      id: e.id,
+      source: e.from,
+      target: e.to,
+      weight: e.cost,
+      risk: 0,
+    })),
+  })
 }
 
 /**

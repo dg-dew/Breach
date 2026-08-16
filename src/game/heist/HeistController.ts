@@ -14,7 +14,6 @@ import {
   ENTRY_ID,
   EXIT_ID,
   FACILITY_LOCATIONS,
-  FACILITY_ROUTES,
   MST_EDGES,
   MST_NODES,
   NETWORK_ID,
@@ -27,11 +26,13 @@ import {
   facilityAdjacency,
   locationName,
   mstEdge,
+  pathfindingAdjacency,
+  pathfindingEdgeBetween,
   routeBetweenFacility,
   searchAdjacency,
   searchNode,
 } from './world'
-import { facilityGraph, isFacilityRouteOpen, knapsack, orderSimilarity } from './solve'
+import { facilityGraph, isFacilityRouteOpen, knapsack, orderSimilarity, pathfindingGraph } from './solve'
 import type {
   Asset,
   HeistPerformance,
@@ -43,7 +44,6 @@ import type {
   SearchPerformance,
   DpPerformance,
 } from './types'
-import type { FacilityRoute } from './world'
 
 export const SEARCH_TIME_SEC = 3
 export const MST_TIME_SEC = 20
@@ -83,6 +83,12 @@ export interface HeistView {
   searchVisited: string[]
   searchCurrent: string
   searchAvailable: string[]
+  /** Phase 3 route-building state. */
+  routePath: string[]
+  routeCurrent: string
+  routeAvailable: string[]
+  routeCost: number
+  routeLocked: boolean
   mstSelected: string[]
   mstNodes: string[]
   mstTotal: number
@@ -130,6 +136,10 @@ export class HeistController {
   private searchVisited: string[] = [SEARCH_START]
   private searchKnown = new Set<string>([SEARCH_START])
 
+  /** Phase 3 — the route the player is building node-by-node. */
+  private routePath: string[] = [SERVER_ID]
+  private routeLocked = false
+
   private mstSelected = new Set<string>()
   private mstCycleRejections = 0
 
@@ -173,6 +183,7 @@ export class HeistController {
       playerEdges: [...this.playerEdges],
       searchVisited: [...this.searchVisited],
       searchKnown: [...this.searchKnown],
+      routePath: [...this.routePath],
       mstSelected: [...this.mstSelected],
       mstCycleRejections: this.mstCycleRejections,
       dpSelected: [...this.dpSelected],
@@ -198,6 +209,8 @@ export class HeistController {
     c.searchCurrent = snap.searchVisited[snap.searchVisited.length - 1] ?? SEARCH_START
     c.searchVisited = [...snap.searchVisited]
     c.searchKnown = new Set(snap.searchKnown)
+    c.routePath = snap.routePath?.length ? [...snap.routePath] : [SERVER_ID]
+    c.routeLocked = c.routePath[c.routePath.length - 1] === ARCHIVE_ID
     c.mstSelected = new Set(snap.mstSelected)
     c.mstCycleRejections = snap.mstCycleRejections
     c.dpSelected = new Set(snap.dpSelected)
@@ -319,6 +332,63 @@ export class HeistController {
     return true
   }
 
+  /** Phase 3 — add the next node to the route being built. */
+  routeSelect(nodeId: string): boolean {
+    if (this.phase !== 'pathfinding' || this.complete || this.routeLocked) return false
+    const current = this.routePath[this.routePath.length - 1]
+    const edge = pathfindingEdgeBetween(current, nodeId)
+    if (!edge) return false
+    if (this.routePath.includes(nodeId)) return false
+
+    this.routePath.push(nodeId)
+    this.routeLocked = nodeId === ARCHIVE_ID
+    this.timeRemaining = Math.max(0, this.timeRemaining - edge.timeSec)
+    this.exposure = clamp(this.exposure + edge.exposure)
+    this.currentId = nodeId
+
+    if (this.routeLocked) {
+      // Commit the built route to the player's path, then the interact label appears.
+      for (let i = 1; i < this.routePath.length; i++) {
+        if (!this.playerPath.includes(this.routePath[i])) this.playerPath.push(this.routePath[i])
+      }
+      this.emit()
+      return true
+    }
+
+    if (this.timeRemaining <= 0) {
+      this.fail('TIME EXPIRED')
+      return false
+    }
+    this.emit()
+    return true
+  }
+
+  /** Phase 3 — remove the most recent node from the route. */
+  undoRoute(): boolean {
+    if (this.phase !== 'pathfinding' || this.complete || this.routeLocked) return false
+    if (this.routePath.length <= 1) return false
+    const prev = this.routePath[this.routePath.length - 2]
+    const removed = this.routePath[this.routePath.length - 1]
+    const edge = pathfindingEdgeBetween(prev, removed)
+    this.routePath.pop()
+    this.currentId = prev
+    if (edge) {
+      this.timeRemaining = Math.min(this.timeLimitSec, this.timeRemaining + edge.timeSec)
+      this.exposure = clamp(this.exposure - edge.exposure)
+    }
+    this.emit()
+    return true
+  }
+
+  /** Phase 3 — reset the route back to the start node. */
+  resetRoute(): boolean {
+    if (this.phase !== 'pathfinding' || this.complete || this.routeLocked) return false
+    this.routePath = [SERVER_ID]
+    this.currentId = SERVER_ID
+    this.emit()
+    return true
+  }
+
   /** Contextual interaction — advances the phase only at real objectives. */
   interact(): boolean {
     if (this.complete) return false
@@ -330,7 +400,7 @@ export class HeistController {
       this.finishSearch()
       return true
     }
-    if (this.phase === 'pathfinding' && this.currentId === ARCHIVE_ID) {
+    if (this.phase === 'pathfinding' && this.routeLocked) {
       this.beginOptimization()
       return true
     }
@@ -439,6 +509,8 @@ export class HeistController {
     this.performance.search = this.computeSearchPerformance()
     this.phasesCompleted += 1
     this.phase = 'pathfinding'
+    this.routePath = [SERVER_ID]
+    this.routeLocked = false
     this.currentId = SERVER_ID
     this.visited.add(SERVER_ID)
     this.discovered.add(SERVER_ID)
@@ -519,15 +591,16 @@ export class HeistController {
   }
 
   private computePathfindingPerformance(): PathfindingPerformance {
-    const run = runAlgorithm('DIJKSTRA', facilityGraph('pathfinding'), SERVER_ID, ARCHIVE_ID)
-    const startIdx = this.playerPath.indexOf(SERVER_ID)
-    const legPath = startIdx >= 0 ? this.playerPath.slice(startIdx) : [SERVER_ID, ...this.playerPath]
-    const legEdges = startIdx >= 0 ? this.playerEdges.slice(startIdx) : []
+    const run = runAlgorithm('DIJKSTRA', pathfindingGraph(), SERVER_ID, ARCHIVE_ID)
+    const legPath = [...this.routePath]
     let playerCost = 0
     let exposureGained = 0
-    for (const r of this.facilityRoutesFor(legEdges)) {
-      playerCost += r.cost
-      exposureGained += r.exposure
+    for (let i = 1; i < legPath.length; i++) {
+      const e = pathfindingEdgeBetween(legPath[i - 1], legPath[i])
+      if (e) {
+        playerCost += e.cost
+        exposureGained += e.exposure
+      }
     }
     const optimalCost = run.pathCost
     const efficiency = optimalCost > 0 ? Math.round(clamp((optimalCost / Math.max(1, playerCost)) * 100)) : 100
@@ -587,12 +660,14 @@ export class HeistController {
     const run = runAlgorithm('DIJKSTRA', facilityGraph('extraction'), ARCHIVE_ID, EXIT_ID)
     const startIdx = this.playerPath.indexOf(ARCHIVE_ID)
     const legPath = startIdx >= 0 ? this.playerPath.slice(startIdx) : []
-    const legEdges = startIdx >= 0 ? this.playerEdges.slice(startIdx) : []
     let playerCost = 0
     let exposureGained = 0
-    for (const r of this.facilityRoutesFor(legEdges)) {
-      playerCost += r.cost
-      exposureGained += r.exposure
+    for (let i = 1; i < legPath.length; i++) {
+      const r = routeBetweenFacility(legPath[i - 1], legPath[i])
+      if (r) {
+        playerCost += r.cost
+        exposureGained += r.exposure
+      }
     }
     const optimalCost = run.pathCost
     const efficiency = optimalCost > 0 ? Math.round(clamp((optimalCost / Math.max(1, playerCost)) * 100)) : 100
@@ -609,12 +684,12 @@ export class HeistController {
 
   // ---------------------------------------------------------------- helpers --
   private canMove(): boolean {
-    return this.phase === 'infiltration' || this.phase === 'pathfinding' || this.phase === 'extraction'
+    return this.phase === 'infiltration' || this.phase === 'extraction'
   }
 
   private atObjective(): boolean {
     if (this.phase === 'infiltration') return this.currentId === NETWORK_ID
-    if (this.phase === 'pathfinding') return this.currentId === ARCHIVE_ID
+    if (this.phase === 'pathfinding') return this.routeLocked
     if (this.phase === 'extraction') return this.currentId === EXIT_ID
     return false
   }
@@ -627,14 +702,19 @@ export class HeistController {
     return DP_ASSETS.find((a) => a.id === id) ?? null
   }
 
-  private facilityRoutesFor(edgeIds: string[]) {
-    return edgeIds.map((id) => FACILITY_ROUTES.find((r) => r.id === id)).filter((r): r is FacilityRoute => Boolean(r))
-  }
-
   private mstTotalCost(): number {
     let total = 0
     for (const id of this.mstSelected) {
       const e = mstEdge(id)
+      if (e) total += e.cost
+    }
+    return total
+  }
+
+  private routeCost(): number {
+    let total = 0
+    for (let i = 1; i < this.routePath.length; i++) {
+      const e = pathfindingEdgeBetween(this.routePath[i - 1], this.routePath[i])
       if (e) total += e.cost
     }
     return total
@@ -699,7 +779,7 @@ export class HeistController {
   private interactLabel(): string | null {
     if (this.phase === 'infiltration' && this.currentId === NETWORK_ID) return 'ACCESS INTERNAL NETWORK'
     if (this.phase === 'search' && this.searchCurrent === SEARCH_TARGET) return 'LOCATE ACCESS TERMINAL'
-    if (this.phase === 'pathfinding' && this.currentId === ARCHIVE_ID) return 'SECURE THE ARCHIVE'
+    if (this.phase === 'pathfinding' && this.routeLocked) return 'SECURE THE ARCHIVE'
     if (this.phase === 'extraction' && this.currentId === EXIT_ID) return 'EXTRACT'
     return null
   }
@@ -768,6 +848,15 @@ export class HeistController {
       searchAvailable: searchAdjacency(this.searchCurrent)
         .map((e) => (e.from === this.searchCurrent ? e.to : e.from))
         .filter((id) => this.searchKnown.has(id)),
+      routePath: [...this.routePath],
+      routeCurrent: this.routePath[this.routePath.length - 1],
+      routeAvailable: this.routePath.length
+        ? pathfindingAdjacency(this.routePath[this.routePath.length - 1])
+            .map((e) => (e.from === this.routePath[this.routePath.length - 1] ? e.to : e.from))
+            .filter((id) => !this.routePath.includes(id))
+        : [],
+      routeCost: this.routeCost(),
+      routeLocked: this.routeLocked,
       mstSelected: [...this.mstSelected],
       mstNodes: [...MST_NODES],
       mstTotal: this.mstTotalCost(),

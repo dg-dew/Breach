@@ -124,6 +124,60 @@ export const SEARCH_START = 'S-NETWORK'
 export const SEARCH_TARGET = 'S-TERMINAL'
 
 // ---------------------------------------------------------------------------
+// Phase 3 — weighted route graph (Dijkstra)
+// A small, deliberately designed weighted graph so the player can reason about
+// alternative routes. Primary edge cost is the Dijkstra weight; timeSec and
+// exposure are secondary attributes shown on hover.
+// ---------------------------------------------------------------------------
+
+export interface PathfindingNode {
+  id: string
+  name: string
+  x: number
+  y: number
+}
+
+export interface PathfindingEdge {
+  id: string
+  from: string
+  to: string
+  /** Primary Dijkstra weight. */
+  cost: number
+  /** Secondary: clock time consumed. */
+  timeSec: number
+  /** Secondary: exposure gained. */
+  exposure: number
+}
+
+export const PATHFINDING_START = SERVER_ID
+export const PATHFINDING_TARGET = ARCHIVE_ID
+
+export const PATHFINDING_NODES: PathfindingNode[] = [
+  { id: 'SERVER', name: 'SERVER ROOM', x: 240, y: 120 },
+  { id: 'CONTROL', name: 'CONTROL ROOM', x: 80, y: 200 },
+  { id: 'NETWORK', name: 'NETWORK NODE', x: 480, y: 80 },
+  { id: 'POWER', name: 'POWER NODE', x: 140, y: 340 },
+  { id: 'SECURITY', name: 'SECURITY NODE', x: 520, y: 260 },
+  { id: 'BACKUP', name: 'BACKUP NODE', x: 240, y: 300 },
+  { id: 'ROUTER', name: 'DATA ROUTER', x: 380, y: 380 },
+  { id: 'ARCHIVE', name: 'ARCHIVE CHAMBER', x: 600, y: 460 },
+]
+
+export const PATHFINDING_EDGES: PathfindingEdge[] = [
+  { id: 'pf-server-control', from: 'SERVER', to: 'CONTROL', cost: 4, timeSec: 4, exposure: 5 },
+  { id: 'pf-server-network', from: 'SERVER', to: 'NETWORK', cost: 5, timeSec: 5, exposure: 4 },
+  { id: 'pf-server-power', from: 'SERVER', to: 'POWER', cost: 2, timeSec: 2, exposure: 2 },
+  { id: 'pf-server-backup', from: 'SERVER', to: 'BACKUP', cost: 5, timeSec: 4, exposure: 3 },
+  { id: 'pf-server-security', from: 'SERVER', to: 'SECURITY', cost: 5, timeSec: 4, exposure: 3 },
+  { id: 'pf-control-archive', from: 'CONTROL', to: 'ARCHIVE', cost: 6, timeSec: 6, exposure: 7 },
+  { id: 'pf-network-archive', from: 'NETWORK', to: 'ARCHIVE', cost: 6, timeSec: 6, exposure: 6 },
+  { id: 'pf-security-archive', from: 'SECURITY', to: 'ARCHIVE', cost: 2, timeSec: 2, exposure: 3 },
+  { id: 'pf-power-router', from: 'POWER', to: 'ROUTER', cost: 8, timeSec: 7, exposure: 6 },
+  { id: 'pf-backup-router', from: 'BACKUP', to: 'ROUTER', cost: 2, timeSec: 2, exposure: 2 },
+  { id: 'pf-router-archive', from: 'ROUTER', to: 'ARCHIVE', cost: 3, timeSec: 3, exposure: 4 },
+]
+
+// ---------------------------------------------------------------------------
 // Phase 4 — damaged power network (MST puzzle)
 // ---------------------------------------------------------------------------
 
@@ -182,6 +236,20 @@ export function searchNode(id: string): SearchNode {
 
 export function mstEdge(id: string): MstEdge | null {
   return MST_EDGES.find((e) => e.id === id) ?? null
+}
+
+export function pathfindingNode(id: string): PathfindingNode | null {
+  return PATHFINDING_NODES.find((n) => n.id === id) ?? null
+}
+
+/** The pathfinding edge directly connecting a → b, if it exists. */
+export function pathfindingEdgeBetween(a: string, b: string): PathfindingEdge | null {
+  return PATHFINDING_EDGES.find((e) => (e.from === a && e.to === b) || (e.from === b && e.to === a)) ?? null
+}
+
+/** Pathfinding edges incident to a node. */
+export function pathfindingAdjacency(id: string): PathfindingEdge[] {
+  return PATHFINDING_EDGES.filter((e) => e.from === id || e.to === id)
 }
 
 export function asset(id: string): Asset | null {

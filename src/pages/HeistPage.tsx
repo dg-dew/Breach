@@ -15,7 +15,12 @@ import {
   DP_ASSETS,
   MST_EDGES,
   MST_NODES,
+  PATHFINDING_EDGES,
+  PATHFINDING_NODES,
+  PATHFINDING_START,
+  PATHFINDING_TARGET,
   SEARCH_TARGET,
+  pathfindingEdgeBetween,
   searchNode,
 } from '@/game/heist/world'
 import { useHeistStore } from '@/store/heistStore'
@@ -41,7 +46,7 @@ const fmtTime = (s: number) =>
 
 interface HeistAction {
   id: string
-  kind: 'interact' | 'move' | 'node' | 'edge' | 'asset' | 'finalize'
+  kind: 'interact' | 'move' | 'node' | 'route' | 'edge' | 'asset' | 'finalize' | 'undo' | 'reset'
   label: string
   hint?: string
   target?: string
@@ -52,7 +57,7 @@ interface HeistAction {
 
 function buildActions(view: HeistView): HeistAction[] {
   const actions: HeistAction[] = []
-  const isMovement = view.phase === 'infiltration' || view.phase === 'pathfinding' || view.phase === 'extraction'
+  const isMovement = view.phase === 'infiltration' || view.phase === 'extraction'
 
   if (view.interactLabel) {
     actions.push({ id: 'interact', kind: 'interact', label: view.interactLabel, danger: view.phase === 'extraction' })
@@ -86,6 +91,25 @@ function buildActions(view: HeistView): HeistAction[] {
         target: nodeId,
         selected: nodeId === view.searchCurrent,
       })
+    }
+  }
+
+  if (view.phase === 'pathfinding') {
+    for (const nodeId of view.routeAvailable) {
+      const n = PATHFINDING_NODES.find((pn) => pn.id === nodeId)
+      const edge = pathfindingEdgeBetween(view.routeCurrent, nodeId)
+      const isTarget = nodeId === PATHFINDING_TARGET
+      actions.push({
+        id: `route-${nodeId}`,
+        kind: 'route',
+        label: n ? (isTarget ? `${n.name} ★ TARGET` : n.name) : nodeId,
+        hint: edge ? `COST ${edge.cost} · +${edge.timeSec}s · +${edge.exposure} EXP` : '',
+        target: nodeId,
+      })
+    }
+    if (view.routePath.length > 1) {
+      actions.push({ id: 'undo-route', kind: 'undo', label: 'UNDO LAST MOVE' })
+      actions.push({ id: 'reset-route', kind: 'reset', label: 'RESET ROUTE' })
     }
   }
 
@@ -212,6 +236,16 @@ export function HeistPage() {
           break
         case 'node':
           if (controller.searchMove(action.target!)) play('nodeActivate')
+          break
+        case 'route':
+          if (controller.routeSelect(action.target!)) play('edgeTraverse')
+          else play('warning')
+          break
+        case 'undo':
+          if (controller.undoRoute()) play('uiClick')
+          break
+        case 'reset':
+          if (controller.resetRoute()) play('uiClick')
           break
         case 'edge':
           if (controller.toggleMst(action.target!)) {
@@ -397,6 +431,8 @@ export function HeistPage() {
           <div className="flex-1">
             {phase === 'search' ? (
               <SearchGrid view={view} focus={focus} actions={actions} onTrigger={trigger} />
+            ) : phase === 'pathfinding' ? (
+              <RouteGraphView view={view} focus={focus} actions={actions} onTrigger={trigger} />
             ) : phase === 'networkOptimization' ? (
               <MstPanel view={view} focus={focus} actions={actions} onTrigger={trigger} />
             ) : phase === 'resourceOptimization' ? (
@@ -682,6 +718,152 @@ function SearchGrid({ view, focus, actions, onTrigger }: ActionProps & { view: H
       <div className="panel px-6 py-4">
         <p className="label mb-3">CHOOSE NEXT NODE</p>
         <ActionGrid focus={focus} actions={actions} onTrigger={onTrigger} />
+      </div>
+    </div>
+  )
+}
+
+function RouteGraphView({ view, focus, actions, onTrigger }: ActionProps & { view: HeistView }) {
+  const routeSet = new Set(view.routePath)
+  const routeOrder = new Map(view.routePath.map((id, i) => [id, i]))
+  const locked = view.routeLocked
+  return (
+    <div className="space-y-5">
+      <div className="panel px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="label">DATA NETWORK — WEIGHTED ROUTE</p>
+            <p className="mt-1 font-mono text-[11px] text-muted">
+              ROUTE TO ARCHIVE · CURRENT{' '}
+              <span className="text-amber">{PATHFINDING_NODES.find((n) => n.id === view.routeCurrent)?.name}</span>
+            </p>
+          </div>
+          <span className="font-mono text-[10px] tracking-[0.25em] text-muted">DIJKSTRA · SHORTEST PATH</span>
+        </div>
+      </div>
+
+      <div className="panel overflow-x-auto px-2 py-4">
+        <svg viewBox="0 0 700 520" className="mx-auto min-w-[620px]" role="img" aria-label="Weighted network graph">
+          {PATHFINDING_EDGES.map((e) => {
+            const a = PATHFINDING_NODES.find((n) => n.id === e.from)!
+            const b = PATHFINDING_NODES.find((n) => n.id === e.to)!
+            const used = routeSet.has(e.from) && routeSet.has(e.to) && Math.abs((routeOrder.get(e.from) ?? 0) - (routeOrder.get(e.to) ?? 0)) === 1
+            return (
+              <g key={e.id}>
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  className={used ? 'stroke-amber' : 'stroke-white/25'}
+                  strokeWidth={used ? 3 : 1.5}
+                />
+                <text
+                  x={(a.x + b.x) / 2}
+                  y={(a.y + b.y) / 2 - 6}
+                  textAnchor="middle"
+                  className="fill-cream/70 font-mono"
+                  fontSize="13"
+                >
+                  {e.cost}
+                </text>
+              </g>
+            )
+          })}
+
+          {PATHFINDING_NODES.map((n) => {
+            const isCurrent = n.id === view.routeCurrent
+            const isStart = n.id === PATHFINDING_START
+            const isTarget = n.id === PATHFINDING_TARGET
+            const inRoute = routeSet.has(n.id)
+            const selectable = !locked && !inRoute && !isCurrent
+            return (
+              <g
+                key={n.id}
+                onClick={() => selectable && onTrigger({ id: `route-${n.id}`, kind: 'route', label: n.name, target: n.id })}
+                className={selectable ? 'cursor-pointer' : ''}
+              >
+                {isStart && <circle cx={n.x} cy={n.y} r={24} className="fill-success/10" />}
+                <circle
+                  cx={n.x}
+                  cy={n.y}
+                  r={16}
+                  className={
+                    isCurrent
+                      ? 'fill-amber/20'
+                      : inRoute
+                        ? 'fill-success/20'
+                        : selectable
+                          ? 'fill-surface'
+                          : 'fill-surface/60'
+                  }
+                  stroke="currentColor"
+                  strokeWidth={isCurrent || inRoute || isTarget ? 2.5 : 1.5}
+                />
+                <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize="10" className="fill-cream/80 font-mono">
+                  {isStart ? '●' : isTarget ? '◎' : isCurrent ? '◆' : inRoute ? routeOrder.get(n.id)! + 1 : ''}
+                </text>
+                <text
+                  x={n.x}
+                  y={n.y + 32}
+                  textAnchor="middle"
+                  fontSize="10"
+                  className={isTarget ? 'fill-amber font-mono' : 'fill-muted font-mono'}
+                >
+                  {n.name}
+                </text>
+                {isStart && (
+                  <text x={n.x} y={n.y - 26} textAnchor="middle" fontSize="9" className="fill-success font-mono tracking-widest">
+                    START
+                  </text>
+                )}
+                {isTarget && (
+                  <text x={n.x} y={n.y - 26} textAnchor="middle" fontSize="9" className="fill-amber font-mono tracking-widest">
+                    TARGET
+                  </text>
+                )}
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="panel px-6 py-4">
+          <div className="flex items-center justify-between">
+            <p className="label">CURRENT ROUTE</p>
+            <span className="font-mono text-[10px] tracking-widest text-muted">COST {view.routeCost}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {view.routePath.map((id, i) => (
+              <span key={id} className="font-mono text-[10px] tracking-widest text-cream">
+                {PATHFINDING_NODES.find((n) => n.id === id)?.name}
+                {i < view.routePath.length - 1 && <span className="text-amber"> → </span>}
+              </span>
+            ))}
+            {view.routePath.length === 0 && <span className="font-mono text-[10px] text-muted">NO ROUTE SET</span>}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => onTrigger({ id: 'undo-route', kind: 'undo', label: 'UNDO LAST MOVE' })}
+              disabled={locked || view.routePath.length <= 1}
+              className="btn-secondary"
+            >
+              UNDO LAST MOVE
+            </button>
+            <button
+              onClick={() => onTrigger({ id: 'reset-route', kind: 'reset', label: 'RESET ROUTE' })}
+              disabled={locked || view.routePath.length <= 1}
+              className="btn-secondary"
+            >
+              RESET ROUTE
+            </button>
+          </div>
+        </div>
+        <div className="panel px-6 py-4">
+          <p className="label mb-3">{locked ? 'ROUTE LOCKED — READY' : 'CHOOSE NEXT NODE'}</p>
+          <ActionGrid focus={focus} actions={actions} onTrigger={onTrigger} />
+        </div>
       </div>
     </div>
   )

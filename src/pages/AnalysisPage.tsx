@@ -125,6 +125,124 @@ export function AnalysisPage() {
       )
       : null
 
+  // Pathfinding (Phase 3) compare panel
+  const pfCompare = (
+    <div className="mt-6 panel px-5 py-4">
+      <div className="flex items-center justify-between">
+        <p className="label">DATA NETWORK — SHORTEST ROUTE</p>
+        <span className="font-mono text-[10px] tracking-[0.2em] text-muted">DIJKSTRA</span>
+      </div>
+
+      <div className="mt-3 grid gap-4 lg:grid-cols-2">
+        <div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div>
+              <p className="font-mono text-[10px] text-muted">YOUR ROUTE COST</p>
+              <p className="font-mono text-lg font-semibold text-amber">{analysis.pfPlayerCost}</p>
+              <p className="font-mono text-[9px] text-muted/60">{analysis.pfPlayerPath.join(' → ')}</p>
+            </div>
+            <div>
+              <p className="font-mono text-[10px] text-muted">OPTIMAL COST</p>
+              <p className="font-mono text-lg font-semibold text-cream">{analysis.pfOptimalCost}</p>
+              <p className="font-mono text-[9px] text-muted/60">{analysis.pfOptimalPath.join(' → ')}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-4 font-mono text-[10px] tracking-[0.2em]">
+            <span className={analysis.pfEfficiency === 100 ? 'text-success' : 'text-amber'}>
+              ROUTE EFFICIENCY {analysis.pfEfficiency}%
+            </span>
+            <span className="text-muted">EXPOSURE GAINED +{analysis.pfExposureGained}</span>
+          </div>
+
+          {analysis.pfDecisionPoint && (
+            <div className="mt-4 border-t border-white/5 pt-3">
+              <p className="label mb-2">WHY NOT OPTIMAL?</p>
+              <p className="font-mono text-[11px] text-cream">
+                At <span className="text-amber">{analysis.pfDecisionPoint.nodeId}</span> you took{' '}
+                <span className="text-amber">{analysis.pfDecisionPoint.playerRoute}</span> ({analysis.pfDecisionPoint.playerCost}) instead of{' '}
+                <span className="text-cream">{analysis.pfDecisionPoint.optimalRoute}</span> ({analysis.pfDecisionPoint.optimalCost}).
+              </p>
+              <p className="mt-1 font-mono text-[10px] text-muted">
+                RESULT: +{analysis.pfDecisionPoint.playerCost - analysis.pfDecisionPoint.optimalCost} cost, +
+                {analysis.pfDecisionPoint.playerTime - analysis.pfDecisionPoint.optimalTime} sec, +
+                {analysis.pfDecisionPoint.playerExposure - analysis.pfDecisionPoint.optimalExposure} exposure
+              </p>
+            </div>
+          )}
+        </div>
+
+        <svg viewBox="0 0 700 520" className="w-full" role="img" aria-label="Weighted route analysis">
+          {analysis.pfEdges.map((e) => {
+            const a = analysis.pfNodes.find((n) => n.id === e.from)!
+            const b = analysis.pfNodes.find((n) => n.id === e.to)!
+            const stroke = e.playerUsed
+              ? '#E7B85C'
+              : e.optimal
+                ? 'rgba(240,234,214,0.55)'
+                : 'rgba(255,255,255,0.1)'
+            const width = e.playerUsed ? 3 : e.optimal ? 2.4 : 1.2
+            const dash = e.optimal && !e.playerUsed ? '6 6' : undefined
+            return (
+              <g key={e.id}>
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={stroke} strokeWidth={width} strokeDasharray={dash} />
+                <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} textAnchor="middle" fontSize="12" fill="rgba(240,234,214,0.5)" className="font-mono">
+                  {e.cost}
+                </text>
+              </g>
+            )
+          })}
+          {analysis.pfNodes.map((n) => {
+            const inPlayer = analysis.pfPlayerPath.includes(n.id)
+            const inOptimal = analysis.pfOptimalPath.includes(n.id)
+            const isTarget = n.id === analysis.pfOptimalPath[analysis.pfOptimalPath.length - 1]
+            return (
+              <g key={n.id}>
+                <circle
+                  cx={n.x}
+                  cy={n.y}
+                  r={13}
+                  fill={inPlayer ? '#15301F' : '#0D1B14'}
+                  stroke={inPlayer ? '#E7B85C' : isTarget ? 'rgba(240,234,214,0.7)' : 'rgba(255,255,255,0.25)'}
+                  strokeWidth={inPlayer ? 2 : 1.2}
+                >
+                  <title>{n.name}</title>
+                </circle>
+                <text x={n.x} y={n.y + 3} textAnchor="middle" fontSize="9" fill={inPlayer ? '#E7B85C' : inOptimal ? 'rgba(240,234,214,0.7)' : 'rgba(255,255,255,0.4)'} className="font-mono">
+                  {n.id}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+
+      <div className="mt-4 grid gap-4 border-t border-white/5 pt-4 lg:grid-cols-2">
+        <div>
+          <p className="label mb-2">FINAL DISTANCES FROM SERVER</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            {analysis.pfDistanceTable.map((row) => (
+              <p key={row.nodeId} className="flex justify-between font-mono text-[10px] text-muted">
+                <span className="text-cream/80">{row.nodeId}</span>
+                <span className={Number.isFinite(row.distance) ? 'text-amber' : 'text-muted/50'}>
+                  {Number.isFinite(row.distance) ? row.distance : '∞'}
+                </span>
+              </p>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="label mb-2">DIJKSTRA RUN (INTERNAL)</p>
+          <div className="space-y-1 font-mono text-[10px] text-muted">
+            <p className="flex justify-between"><span>NODES PROCESSED</span><span className="text-cream/80">{analysis.pfPqNodesProcessed}</span></p>
+            <p className="flex justify-between"><span>EDGE RELAXATIONS</span><span className="text-cream/80">{analysis.pfPqRelaxations}</span></p>
+            <p className="flex justify-between"><span>PRIORITY QUEUE OPS</span><span className="text-cream/80">{analysis.pfPqOps}</span></p>
+            <p className="flex justify-between"><span>SHORTEST PATH LENGTH</span><span className="text-cream/80">{analysis.pfOptimalPath.length - 1} edges</span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   // MST compare panel
   const mstCompare = (
     <div className="mt-6 panel px-5 py-4">
@@ -281,6 +399,8 @@ export function AnalysisPage() {
               </p>
             </div>
           </div>
+
+          {pfCompare}
 
           {mstCompare}
 

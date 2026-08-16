@@ -159,6 +159,8 @@ export interface HeistSnapshot {
   playerEdges: string[]
   searchVisited: string[]
   searchKnown: string[]
+  /** Phase 3 route the player is building node-by-node. */
+  routePath: string[]
   mstSelected: string[]
   mstCycleRejections: number
   dpSelected: string[]
